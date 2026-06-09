@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: highfil_crm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d highfil_crm"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+  backend:
+    build: ./backend
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: highfil_crm
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      JWT_SECRET: highfil-crm-secret-2026
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+volumes:
+  pgdata:
+
+networks:
+  crm-network:
+    driver: bridge

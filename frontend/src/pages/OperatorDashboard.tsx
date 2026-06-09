@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../api';
-import { useAuth } from '../context/AuthContext';
 
 const STATUS_LABELS: Record<string, string> = {
   acepto: 'Aceptó',
@@ -30,7 +29,6 @@ interface Client {
 interface Call { id: number; status: string; notes: string; created_at: string; operator_name: string; scheduled_at: string; }
 
 export default function OperatorDashboard() {
-  const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [selected, setSelected] = useState<Client | null>(null);
   const [calls, setCalls] = useState<Call[]>([]);

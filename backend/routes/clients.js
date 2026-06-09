@@ -1,34 +1,58 @@
-const supabase = require('../supabase');
+const express = require('express');
+const pool = require('../db');
+const { auth } = require('../middleware');
+
+const router = express.Router();
+router.use(auth);
 
 async function listClients(req, res) {
   const { assigned, search } = req.query;
 
-  let query = supabase.from('clients').select('*').order('last_name', { ascending: true }).limit(200);
+  try {
+    let query, params;
 
-  if (assigned === 'mine' && req.user.role === 'operator') {
-    const { data: assignments } = await supabase
-      .from('assignments')
-      .select('client_id')
-      .eq('operator_id', req.user.id);
-    const ids = assignments?.map(a => a.client_id) || [];
-    if (ids.length === 0) return res.json([]);
-    query = query.in('id', ids);
+    if (assigned === 'mine' && req.user.role === 'operator') {
+      query = `
+        SELECT c.* FROM clients c
+        INNER JOIN assignments a ON a.client_id = c.id
+        WHERE a.operator_id = $1
+        ORDER BY c.last_name ASC NULLS LAST
+        LIMIT 200
+      `;
+      params = [req.user.id];
+    } else if (search) {
+      const s = `%${search}%`;
+      query = `
+        SELECT * FROM clients
+        WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR nickname ILIKE $1
+           OR organization ILIKE $1 OR phone ILIKE $1 OR normalized_phone ILIKE $1
+        ORDER BY last_name ASC NULLS LAST
+        LIMIT 200
+      `;
+      params = [s];
+    } else {
+      query = 'SELECT * FROM clients ORDER BY last_name ASC NULLS LAST LIMIT 200';
+      params = [];
+    }
+
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (search) {
-    const s = `%${search}%`;
-    query = query.or(`first_name.ilike.${s},last_name.ilike.${s},nickname.ilike.${s},organization.ilike.${s},phone.ilike.${s},normalized_phone.ilike.${s}`);
-  }
-
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
 }
 
 async function getClient(req, res) {
-  const { data, error } = await supabase.from('clients').select('*').eq('id', req.params.id).single();
-  if (error || !data) return res.status(404).json({ error: 'Client not found' });
-  res.json(data);
+  try {
+    const { rows } = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Client not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
-module.exports = { listClients, getClient };
+router.get('/', listClients);
+router.get('/:id', getClient);
+
+module.exports = router;

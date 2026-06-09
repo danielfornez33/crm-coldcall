@@ -1,137 +1,144 @@
-const supabase = require('../supabase');
+const express = require('express');
+const pool = require('../db');
+const { auth } = require('../middleware');
+
+const router = express.Router();
+router.use(auth);
 
 async function dashboard(req, res) {
-  const { count: totalClients } = await supabase.from('clients').select('*', { count: 'exact', head: true });
-  const { count: totalCalls } = await supabase.from('calls').select('*', { count: 'exact', head: true });
+  try {
+    const { rows: [{ count: totalClients }] } = await pool.query('SELECT COUNT(*)::int AS count FROM clients');
+    const { rows: [{ count: totalCalls }] } = await pool.query('SELECT COUNT(*)::int AS count FROM calls');
 
-  const { data: callsDistinct } = await supabase.from('calls').select('client_id');
-  const clientsCalled = new Set((callsDistinct || []).map(c => c.client_id)).size;
+    const { rows: distinctClients } = await pool.query('SELECT DISTINCT client_id FROM calls');
+    const clientsCalled = distinctClients.length;
 
-  const today = new Date().toISOString().slice(0, 10);
-  const { count: callsToday } = await supabase
-    .from('calls')
-    .select('*', { count: 'exact', head: true })
-    .gte('created_at', today)
-    .lt('created_at', today + 'T23:59:59.999Z');
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows: [{ count: callsToday }] } = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM calls WHERE created_at >= $1 AND created_at < ($1::date + interval '1 day')",
+      [today]
+    );
 
-  const { data: operators } = await supabase
-    .from('users')
-    .select('id, name')
-    .eq('role', 'operator')
-    .eq('active', true);
+    const { rows: operators } = await pool.query(
+      "SELECT id, name FROM users WHERE role = 'operator' AND active = true"
+    );
 
-  const byOperator = [];
-  for (const op of operators) {
-    const { count: assigned } = await supabase
-      .from('assignments')
-      .select('*', { count: 'exact', head: true })
-      .eq('operator_id', op.id);
+    const byOperator = [];
+    for (const op of operators) {
+      const { rows: [{ count: assigned }] } = await pool.query(
+        'SELECT COUNT(*)::int AS count FROM assignments WHERE operator_id = $1',
+        [op.id]
+      );
 
-    const { data: opCalls } = await supabase
-      .from('calls')
-      .select('status, client_id')
-      .eq('operator_id', op.id);
+      const { rows: opCalls } = await pool.query(
+        'SELECT status, client_id FROM calls WHERE operator_id = $1',
+        [op.id]
+      );
 
-    const called = new Set((opCalls || []).map(c => c.client_id)).size;
-    const acepto = (opCalls || []).filter(c => c.status === 'acepto').length;
+      const called = new Set(opCalls.map(c => c.client_id)).size;
+      const acepto = opCalls.filter(c => c.status === 'acepto').length;
 
-    byOperator.push({
-      id: op.id, name: op.name,
-      assigned: assigned || 0,
-      called,
-      attempts: (opCalls || []).length,
-      acepto
+      byOperator.push({
+        id: op.id, name: op.name,
+        assigned,
+        called,
+        attempts: opCalls.length,
+        acepto
+      });
+    }
+
+    const { rows: statusData } = await pool.query('SELECT status FROM calls');
+    const byStatus = {};
+    for (const c of statusData) {
+      byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+    }
+
+    res.json({
+      totalClients,
+      totalCalls,
+      clientsCalled,
+      callsToday,
+      byOperator,
+      byStatus
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const { data: statusData } = await supabase.from('calls').select('status');
-  const byStatus = {};
-  for (const c of statusData || []) {
-    byStatus[c.status] = (byStatus[c.status] || 0) + 1;
-  }
-
-  res.json({
-    totalClients: totalClients || 0,
-    totalCalls: totalCalls || 0,
-    clientsCalled,
-    callsToday: callsToday || 0,
-    byOperator,
-    byStatus
-  });
 }
 
 async function operatorProgress(req, res) {
   const opId = parseInt(req.params.id);
-  const { data: assignments } = await supabase
-    .from('assignments')
-    .select('client_id')
-    .eq('operator_id', opId);
+  try {
+    const { rows: clients } = await pool.query(`
+      SELECT c.* FROM clients c
+      INNER JOIN assignments a ON a.client_id = c.id
+      WHERE a.operator_id = $1
+      ORDER BY c.last_name ASC NULLS LAST
+    `, [opId]);
 
-  const ids = (assignments || []).map(a => a.client_id);
-  if (ids.length === 0) return res.json([]);
+    if (clients.length === 0) return res.json([]);
 
-  const { data: clients } = await supabase
-    .from('clients')
-    .select('*')
-    .in('id', ids)
-    .order('last_name');
+    const result = [];
+    for (const c of clients) {
+      const { rows: calls } = await pool.query(
+        'SELECT status, created_at FROM calls WHERE client_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [c.id]
+      );
 
-  const result = [];
-  for (const c of clients || []) {
-    const { data: calls } = await supabase
-      .from('calls')
-      .select('status, created_at')
-      .eq('client_id', c.id)
-      .order('created_at', { ascending: false })
-      .limit(1);
+      result.push({
+        ...c,
+        last_status: calls[0]?.status || null,
+        attempts: calls.length,
+        last_call: calls[0]?.created_at || null
+      });
+    }
 
-    result.push({
-      ...c,
-      last_status: calls?.[0]?.status || null,
-      attempts: calls?.length || 0,
-      last_call: calls?.[0]?.created_at || null
-    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json(result);
 }
 
 async function exportData(req, res) {
-  const { data: clients } = await supabase.from('clients').select('*').order('last_name');
-  const result = [];
+  try {
+    const { rows: clients } = await pool.query('SELECT * FROM clients ORDER BY last_name ASC NULLS LAST');
+    const result = [];
 
-  for (const c of clients || []) {
-    const { data: calls } = await supabase
-      .from('calls')
-      .select('status, created_at')
-      .eq('client_id', c.id)
-      .order('created_at', { ascending: false })
-      .limit(1);
+    for (const c of clients) {
+      const { rows: calls } = await pool.query(
+        'SELECT status, created_at FROM calls WHERE client_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [c.id]
+      );
 
-    const { data: assignment } = await supabase
-      .from('assignments')
-      .select('operator_id')
-      .eq('client_id', c.id)
-      .order('id', { ascending: false })
-      .limit(1);
+      const { rows: assignment } = await pool.query(
+        'SELECT operator_id FROM assignments WHERE client_id = $1 ORDER BY id DESC LIMIT 1',
+        [c.id]
+      );
 
-    let assignedTo = '';
-    if (assignment?.[0]) {
-      const { data: op } = await supabase.from('users').select('name').eq('id', assignment[0].operator_id).single();
-      assignedTo = op?.name || '';
+      let assignedTo = '';
+      if (assignment[0]) {
+        const { rows: op } = await pool.query('SELECT name FROM users WHERE id = $1', [assignment[0].operator_id]);
+        assignedTo = op[0]?.name || '';
+      }
+
+      result.push({
+        first_name: c.first_name, last_name: c.last_name, organization: c.organization,
+        phone: c.phone, normalized_phone: c.normalized_phone, city: c.city,
+        last_status: calls[0]?.status || null,
+        attempts: calls.length,
+        last_call_date: calls[0]?.created_at || null,
+        assigned_to: assignedTo
+      });
     }
 
-    result.push({
-      first_name: c.first_name, last_name: c.last_name, organization: c.organization,
-      phone: c.phone, normalized_phone: c.normalized_phone, city: c.city,
-      last_status: calls?.[0]?.status || null,
-      attempts: (calls || []).length,
-      last_call_date: calls?.[0]?.created_at || null,
-      assigned_to: assignedTo
-    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json(result);
 }
 
-module.exports = { dashboard, operatorProgress, exportData };
+router.get('/dashboard', dashboard);
+router.get('/operator/:id', operatorProgress);
+router.get('/export', exportData);
+
+module.exports = router;

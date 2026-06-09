@@ -1,12 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
 
-const STATUS_LABELS: Record<string, string> = {
-  acepto: 'Aceptó', rechazo: 'Rechazó', no_contesta: 'No contesta',
-  numero_invalido: 'Número inválido', ya_en_app: 'Ya está en la app',
-  llamar_despues: 'Llamar después', sin_info: 'Sin información'
-};
-
 export default function SupervisorClients() {
   const [clients, setClients] = useState<any[]>([]);
   const [search, setSearch] = useState('');

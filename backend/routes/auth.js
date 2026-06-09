@@ -1,50 +1,64 @@
-const supabase = require('../supabase');
+const express = require('express');
+const pool = require('../db');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { SECRET } = require('../middleware');
+
+const router = express.Router();
 
 async function login(req, res) {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-  const bcrypt = require('bcryptjs');
-  const jwt = require('jsonwebtoken');
-  const { SECRET } = require('../middleware');
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM users WHERE username = $1 AND active = true LIMIT 1',
+      [username]
+    );
 
-  const { data: users, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('username', username)
-    .eq('active', true)
-    .limit(1);
+    const user = rows[0];
+    if (!user || !bcrypt.compareSync(password, user.password)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-  if (error) return res.status(500).json({ error: error.message });
-  const user = users?.[0];
-  if (!user || !bcrypt.compareSync(password, user.password)) {
-    return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role, name: user.name },
+      SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role, name: user.name } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, name: user.name },
-    SECRET,
-    { expiresIn: '24h' }
-  );
-  res.json({ token, user: { id: user.id, username: user.username, role: user.role, name: user.name } });
 }
 
 async function me(req, res) {
-  const { data: user, error } = await supabase
-    .from('users')
-    .select('id, username, role, name')
-    .eq('id', req.user.id)
-    .single();
-
-  if (error || !user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, username, role, name FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 async function getUsers(req, res) {
   if (req.user.role !== 'supervisor') return res.json([]);
-  const { data, error } = await supabase.from('users').select('id, username, role, name, active');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const { rows } = await pool.query('SELECT id, username, role, name, active FROM users');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
-module.exports = { login, me, getUsers };
+const { auth } = require('../middleware');
+
+router.post('/login', login);
+router.get('/me', auth, me);
+router.get('/users', auth, getUsers);
+
+module.exports = router;

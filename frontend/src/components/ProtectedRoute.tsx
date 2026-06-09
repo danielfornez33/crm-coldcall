@@ -1,7 +1,8 @@
+import { type ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-export function ProtectedRoute({ children, role }: { children: JSX.Element; role?: string }) {
+export function ProtectedRoute({ children, role }: { children: ReactNode; role?: string }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading">Cargando...</div>;
   if (!user) return <Navigate to="/login" />;
