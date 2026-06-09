@@ -53,9 +53,11 @@ async function tenantCheck(req, res, next) {
 function supervisorOnly(req, res, next) {
   const { role } = req.user;
 
+  // Super admin siempre tiene permisos
   if (role === 'super_admin') return next();
 
-  if (req.companyRole !== 'supervisor') {
+  // Si no es super admin, debe ser supervisor en la empresa
+  if (!req.companyRole || req.companyRole !== 'supervisor') {
     return res.status(403).json({ error: 'Supervisor only' });
   }
   next();

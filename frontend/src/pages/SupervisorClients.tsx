@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
+import { useAuth } from '../context/AuthContext';
 
 export default function SupervisorClients() {
   const [clients, setClients] = useState<any[]>([]);
@@ -7,11 +8,13 @@ export default function SupervisorClients() {
   const [operators, setOperators] = useState<any[]>([]);
   const [selectedOp, setSelectedOp] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const { activeCompanyId } = useAuth();
 
   useEffect(() => {
-    api.get('/import/operators').then(r => setOperators(r.data)).catch(() => {});
-    api.get('/clients', { params: { search } }).then(r => setClients(r.data)).catch(() => {});
-  }, [search]);
+    if (!activeCompanyId) return;
+    api.get(`/companies/${activeCompanyId}/import/operators`).then(r => setOperators(r.data)).catch(() => {});
+    api.get(`/companies/${activeCompanyId}/clients`, { params: { search } }).then(r => setClients(r.data)).catch(() => {});
+  }, [search, activeCompanyId]);
 
   const toggleSelect = (id: number) => {
     const next = new Set(selectedIds);
@@ -20,8 +23,8 @@ export default function SupervisorClients() {
   };
 
   const assignAll = async () => {
-    if (!selectedOp || selectedIds.size === 0) return;
-    await api.post('/import/assign', { client_ids: Array.from(selectedIds), operator_id: parseInt(selectedOp) });
+    if (!selectedOp || selectedIds.size === 0 || !activeCompanyId) return;
+    await api.post(`/companies/${activeCompanyId}/import/assign`, { client_ids: Array.from(selectedIds), operator_id: parseInt(selectedOp) });
     setSelectedIds(new Set());
     alert('Asignados!');
   };

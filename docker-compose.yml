@@ -19,6 +19,8 @@ services:
 
   backend:
     build: ./backend
+    ports:
+      - "3001:3001"
     environment:
       DB_HOST: db
       DB_PORT: 5432

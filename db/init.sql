@@ -114,9 +114,79 @@ CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_company_members_company ON company_members(company_id);
 
 -- ============================================================
--- SEED DATA: Super Admin (only user by default)
+-- SEED DATA: Initial Setup
 -- ============================================================
 -- Super Admin: superadmin / superadmin123
 INSERT INTO users (username, password, role, name, active, primary_company_id)
-SELECT 'superadmin', '$2a$10$4R91V8UCDcsMfz7NrZPyiu5bpbg2/xHVxlg.CGoMTtJP4RNA3SJ4a', 'super_admin', 'Super Administrador', true, NULL
+SELECT 'superadmin', '$2a$10$il9cd91OhKPfwuevnVuxNue1JDoacHraGYWpiZzjG0l.05WOgD3AG', 'super_admin', 'Super Administrador', true, NULL
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'superadmin');
+
+-- Demo Company
+INSERT INTO companies (name, slug, active, created_by)
+SELECT 'Empresa Demo', 'empresa-demo', true, 1
+WHERE NOT EXISTS (SELECT 1 FROM companies WHERE slug = 'empresa-demo');
+
+-- Demo Supervisor: supervisor / superadmin123
+INSERT INTO users (username, password, role, name, active, primary_company_id)
+SELECT 'supervisor', '$2a$10$il9cd91OhKPfwuevnVuxNue1JDoacHraGYWpiZzjG0l.05WOgD3AG', 'supervisor', 'Supervisor Demo', true, 1
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'supervisor' AND primary_company_id = 1);
+
+-- Demo Operator: operator / superadmin123
+INSERT INTO users (username, password, role, name, active, primary_company_id)
+SELECT 'operator', '$2a$10$il9cd91OhKPfwuevnVuxNue1JDoacHraGYWpiZzjG0l.05WOgD3AG', 'operator', 'Operador Demo', true, 1
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'operator' AND primary_company_id = 1);
+
+-- Add users to company
+INSERT INTO company_members (company_id, user_id, role)
+SELECT 1, 2, 'supervisor'
+WHERE NOT EXISTS (SELECT 1 FROM company_members WHERE company_id = 1 AND user_id = 2);
+
+INSERT INTO company_members (company_id, user_id, role)
+SELECT 1, 3, 'operator'
+WHERE NOT EXISTS (SELECT 1 FROM company_members WHERE company_id = 1 AND user_id = 3);
+
+-- Demo Clients for testing
+INSERT INTO clients (company_id, first_name, last_name, organization, phone, normalized_phone, email, city, source)
+SELECT 1, 'Juan', 'García', 'Empresa XYZ', '+1234567890', '1234567890', 'juan@xyz.com', 'Madrid', 'demo'
+WHERE NOT EXISTS (SELECT 1 FROM clients WHERE normalized_phone = '1234567890' AND company_id = 1);
+
+INSERT INTO clients (company_id, first_name, last_name, organization, phone, normalized_phone, email, city, source)
+SELECT 1, 'María', 'López', 'Tech Solutions', '+0987654321', '0987654321', 'maria@tech.com', 'Barcelona', 'demo'
+WHERE NOT EXISTS (SELECT 1 FROM clients WHERE normalized_phone = '0987654321' AND company_id = 1);
+
+INSERT INTO clients (company_id, first_name, last_name, organization, phone, normalized_phone, email, city, source)
+SELECT 1, 'Carlos', 'Martínez', 'Construcciones SA', '+1122334455', '1122334455', 'carlos@const.com', 'Valencia', 'demo'
+WHERE NOT EXISTS (SELECT 1 FROM clients WHERE normalized_phone = '1122334455' AND company_id = 1);
+
+INSERT INTO clients (company_id, first_name, last_name, organization, phone, normalized_phone, email, city, source)
+SELECT 1, 'Laura', 'Fernández', 'Marketing Digital', '+5566778899', '5566778899', 'laura@mkt.com', 'Sevilla', 'demo'
+WHERE NOT EXISTS (SELECT 1 FROM clients WHERE normalized_phone = '5566778899' AND company_id = 1);
+
+-- Assign clients to operator
+INSERT INTO assignments (company_id, client_id, operator_id, assigned_by)
+SELECT 1, c.id, 3, 2
+FROM clients c
+WHERE c.company_id = 1 AND NOT EXISTS (
+  SELECT 1 FROM assignments WHERE client_id = c.id AND operator_id = 3 AND company_id = 1
+);
+
+-- Add sample calls
+INSERT INTO calls (company_id, client_id, operator_id, status, notes)
+SELECT 1, 
+  (SELECT id FROM clients WHERE company_id = 1 AND normalized_phone = '1234567890' LIMIT 1),
+  3,
+  'acepto',
+  'Cliente interesado en el producto'
+WHERE NOT EXISTS (
+  SELECT 1 FROM calls WHERE company_id = 1 AND client_id = (SELECT id FROM clients WHERE normalized_phone = '1234567890')
+);
+
+INSERT INTO calls (company_id, client_id, operator_id, status, notes)
+SELECT 1,
+  (SELECT id FROM clients WHERE company_id = 1 AND normalized_phone = '0987654321' LIMIT 1),
+  3,
+  'no_contesta',
+  'Sin respuesta, reintentar mañana'
+WHERE NOT EXISTS (
+  SELECT 1 FROM calls WHERE company_id = 1 AND client_id = (SELECT id FROM clients WHERE normalized_phone = '0987654321')
+);

@@ -407,9 +407,10 @@ async function getOperators(req, res) {
   const companyId = req.companyId;
   try {
     const { rows } = await pool.query(
-      `SELECT u.id, u.name, u.username FROM users u
+      `SELECT u.id, u.name, u.username, u.active, cm.role FROM users u
        INNER JOIN company_members cm ON cm.user_id = u.id
-       WHERE cm.company_id = $1 AND cm.role = 'operator' AND u.active = true`,
+       WHERE cm.company_id = $1 AND cm.role IN ('operator', 'supervisor')
+       ORDER BY u.active DESC, cm.role DESC, u.name ASC`,
       [companyId]
     );
     res.json(rows);
@@ -419,9 +420,11 @@ async function getOperators(req, res) {
 }
 
 async function createOperator(req, res) {
-  const { username, password, name } = req.body;
+  const { username, password, name, role } = req.body;
   const companyId = req.companyId;
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields required' });
+
+  const userRole = role && ['operator', 'supervisor'].includes(role) ? role : 'operator';
 
   try {
     const { rows: existing } = await pool.query(
@@ -433,12 +436,12 @@ async function createOperator(req, res) {
     const hash = bcrypt.hashSync(password, 10);
     const { rows } = await pool.query(
       'INSERT INTO users (username, password, role, name, active, primary_company_id) VALUES ($1, $2, $3, $4, true, $5) RETURNING id',
-      [username, hash, 'operator', name, companyId]
+      [username, hash, userRole, name, companyId]
     );
 
     await pool.query(
       'INSERT INTO company_members (company_id, user_id, role) VALUES ($1, $2, $3)',
-      [companyId, rows[0].id, 'operator']
+      [companyId, rows[0].id, userRole]
     );
 
     res.status(201).json({ message: 'Operator created' });
@@ -487,8 +490,8 @@ async function updateOperator(req, res) {
     }
 
     const { rows: updated } = await pool.query(
-      'SELECT id, username, role, name, active FROM users WHERE id = $1',
-      [id]
+      'SELECT u.id, u.username, u.name, u.active, cm.role FROM users u INNER JOIN company_members cm ON cm.user_id = u.id WHERE u.id = $1 AND cm.company_id = $2',
+      [id, companyId]
     );
     res.json(updated[0]);
   } catch (err) {

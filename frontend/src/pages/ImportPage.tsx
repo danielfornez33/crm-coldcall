@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import api from '../api';
+import { useAuth } from '../context/AuthContext';
 
 export default function ImportPage() {
   const [csvResult, setCsvResult] = useState<any>(null);
@@ -8,15 +9,16 @@ export default function ImportPage() {
   const [vcfFile, setVcfFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  const { activeCompanyId } = useAuth();
 
   const importCSV = async () => {
-    if (!csvFile) return;
+    if (!csvFile || !activeCompanyId) return;
     setLoading(true);
     setMsg('');
     const fd = new FormData();
     fd.append('file', csvFile);
     try {
-      const r = await api.post('/import/csv', fd);
+      const r = await api.post(`/companies/${activeCompanyId}/import/csv`, fd);
       setCsvResult(r.data);
       setMsg(`CSV importado: ${r.data.imported} clientes nuevos, ${r.data.skipped} omitidos`);
     } catch (e: any) {
@@ -26,13 +28,13 @@ export default function ImportPage() {
   };
 
   const importVCF = async () => {
-    if (!vcfFile) return;
+    if (!vcfFile || !activeCompanyId) return;
     setLoading(true);
     setMsg('');
     const fd = new FormData();
     fd.append('file', vcfFile);
     try {
-      const r = await api.post('/import/vcf', fd);
+      const r = await api.post(`/companies/${activeCompanyId}/import/vcf`, fd);
       setVcfResult(r.data);
       setMsg(`VCF importado: ${r.data.imported} contactos nuevos, ${r.data.skipped} omitidos`);
     } catch (e: any) {
@@ -52,7 +54,7 @@ export default function ImportPage() {
           <h3>CSV (Google Contacts)</h3>
           <p>Sube tu archivo CSV exportado de Google Contacts</p>
           <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files?.[0] || null)} />
-          <button onClick={importCSV} disabled={!csvFile || loading} className="btn-primary">Importar CSV</button>
+          <button onClick={importCSV} disabled={!csvFile || loading || !activeCompanyId} className="btn-primary">Importar CSV</button>
           {csvResult && <div className="result">Importados: {csvResult.imported} | Omitidos: {csvResult.skipped}</div>}
         </div>
 
@@ -60,7 +62,7 @@ export default function ImportPage() {
           <h3>VCF (vCard)</h3>
           <p>Sube tu archivo VCF de contactos</p>
           <input type="file" accept=".vcf,.vcard" onChange={e => setVcfFile(e.target.files?.[0] || null)} />
-          <button onClick={importVCF} disabled={!vcfFile || loading} className="btn-primary">Importar VCF</button>
+          <button onClick={importVCF} disabled={!vcfFile || loading || !activeCompanyId} className="btn-primary">Importar VCF</button>
           {vcfResult && <div className="result">Importados: {vcfResult.imported} | Omitidos: {vcfResult.skipped}</div>}
         </div>
       </div>

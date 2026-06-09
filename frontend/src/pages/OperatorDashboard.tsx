@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import api from '../api';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -29,6 +30,7 @@ interface Client {
 interface Call { id: number; status: string; notes: string; created_at: string; operator_name: string; scheduled_at: string; }
 
 export default function OperatorDashboard() {
+  const { companyId } = useParams<{ companyId: string }>();
   const [clients, setClients] = useState<Client[]>([]);
   const [selected, setSelected] = useState<Client | null>(null);
   const [calls, setCalls] = useState<Call[]>([]);
@@ -41,22 +43,23 @@ export default function OperatorDashboard() {
   const triggerReload = () => setReload(x => x + 1);
 
   useEffect(() => {
-    api.get('/reports/dashboard').catch(() => {});
-    api.get('/calls/stats/mine').then(r => setStats(r.data)).catch(() => {});
-    api.get('/clients', { params: { assigned: 'mine' } })
+    if (!companyId) return;
+    api.get(`/companies/${companyId}/reports/dashboard`).catch(() => {});
+    api.get(`/companies/${companyId}/calls/stats/mine`).then(r => setStats(r.data)).catch(() => {});
+    api.get(`/companies/${companyId}/clients`, { params: { assigned: 'mine' } })
       .then(r => setClients(r.data))
       .catch(() => {});
-  }, [reload]);
+  }, [companyId, reload]);
 
   useEffect(() => {
-    if (selected) {
-      api.get('/calls', { params: { client_id: selected.id } }).then(r => setCalls(r.data)).catch(() => {});
+    if (selected && companyId) {
+      api.get(`/companies/${companyId}/calls`, { params: { client_id: selected.id } }).then(r => setCalls(r.data)).catch(() => {});
     }
-  }, [selected]);
+  }, [selected, companyId]);
 
   const registerCall = async () => {
-    if (!selected || !status) return;
-    await api.post('/calls', { client_id: selected.id, status, notes });
+    if (!selected || !status || !companyId) return;
+    await api.post(`/companies/${companyId}/calls`, { client_id: selected.id, status, notes });
     setStatus('');
     setNotes('');
     triggerReload();

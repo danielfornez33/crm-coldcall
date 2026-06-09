@@ -48,10 +48,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('user', JSON.stringify(r.data.user));
     setToken(r.data.token);
     setUser(r.data.user);
-    setCompanies(r.data.companies || []);
     
-    if (r.data.companies && r.data.companies.length > 0) {
-      const companyId = r.data.companies[0].id;
+    let companiesData = r.data.companies || [];
+    if (companiesData.length === 0 && r.data.user.role === 'super_admin') {
+      const companiesRes = await api.get('/auth/companies');
+      companiesData = companiesRes.data;
+    }
+    
+    setCompanies(companiesData);
+    
+    if (companiesData.length > 0) {
+      const companyId = companiesData[0].id;
       setActiveCompanyId(companyId);
       localStorage.setItem('activeCompanyId', String(companyId));
     }
