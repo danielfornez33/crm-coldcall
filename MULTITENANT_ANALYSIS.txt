@@ -1,0 +1,861 @@
+================================================================================
+HIGHFIL CRM - MULTITENANT ARCHITECTURE ANALYSIS
+================================================================================
+
+1. CURRENT DATA MODEL (TABLE RELATIONSHIPS)
+================================================================================
+
+DATABASE TABLES:
+
+1.1 USERS TABLE
+   Structure:
+   - id (SERIAL PRIMARY KEY)
+   - username (TEXT UNIQUE NOT NULL)
+   - password (TEXT NOT NULL - bcrypt hashed)
+   - role (TEXT NOT NULL - 'operator' or 'supervisor')
+   - name (TEXT NOT NULL)
+   - active (BOOLEAN DEFAULT true)
+   - created_at (TIMESTAMPTZ DEFAULT NOW())
+   
+   Purpose: Authentication and authorization for two role levels
+   Default users: admin (supervisor), operador1 (operator)
+
+1.2 CLIENTS TABLE
+   Structure:
+   - id (SERIAL PRIMARY KEY)
+   - first_name, middle_name, last_name, nickname (TEXT)
+   - organization (TEXT)
+   - email (TEXT)
+   - phone, phone2, phone3 (TEXT)
+   - notes (TEXT)
+   - city, region, country (TEXT)
+   - source (TEXT - 'csv', 'vcf')
+   - normalized_phone (TEXT - used for deduplication)
+   - created_at (TIMESTAMPTZ DEFAULT NOW())
+   
+   Purpose: Contact information storage
+   Indexes: normalized_phone (for deduplication)
+
+1.3 CALLS TABLE
+   Structure:
+   - id (SERIAL PRIMARY KEY)
+   - client_id (INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE)
+   - operator_id (INTEGER NOT NULL REFERENCES users(id))
+   - status (TEXT NOT NULL - enum: 'acepto', 'rechazo', 'no_contesta', 
+     'numero_invalido', 'ya_en_app', 'llamar_despues', 'sin_info', 'pendiente')
+   - notes (TEXT)
+   - scheduled_at (TIMESTAMPTZ)
+   - duration_seconds (INTEGER)
+   - created_at (TIMESTAMPTZ DEFAULT NOW())
+   
+   Purpose: Call activity logging and tracking
+   Indexes: client_id, operator_id
+   Relationship: Many-to-one with clients and users
+
+1.4 ASSIGNMENTS TABLE
+   Structure:
+   - id (SERIAL PRIMARY KEY)
+   - client_id (INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE)
+   - operator_id (INTEGER NOT NULL REFERENCES users(id))
+   - assigned_by (INTEGER NOT NULL REFERENCES users(id))
+   - created_at (TIMESTAMPTZ DEFAULT NOW())
+   
+   Purpose: Client-to-operator assignment tracking
+   Indexes: operator_id, client_id
+   Relationships: Many-to-one with clients and users
+
+TABLE RELATIONSHIPS DIAGRAM:
+   
+   users (supervisors & operators)
+      ├── calls (one user -> many calls)
+      ├── assignments (one user -> many assigned clients)
+      └── assignments.assigned_by (supervisor creates assignments)
+   
+   clients
+      ├── calls (one client -> many calls/attempts)
+      └── assignments (one client -> many operator assignments)
+
+
+2. ALL FEATURES THAT EXIST
+================================================================================
+
+2.1 AUTHENTICATION FEATURES
+   - Login with username/password (bcrypt validation)
+   - JWT token generation (24h expiration)
+   - Token persistence in localStorage
+   - Auto-logout on token expiration (401 response)
+   - User session recovery on page reload
+
+2.2 OPERATOR FEATURES (Employees making calls)
+   - View assigned clients list (filtered by role)
+   - Search clients by name/organization/phone
+   - Register call outcomes for each client
+   - Record call status with notes
+   - View call history for selected client
+   - Personal statistics dashboard:
+     * Assigned clients count
+     * Called clients count (unique)
+     * Total call attempts
+     * Acceptance count (status: 'acepto')
+     * Rejection count (status: 'rechazo')
+   - View call history with timestamps
+   - Call status options:
+     * acepto (accepted/interested)
+     * rechazo (rejected/not interested)
+     * no_contesta (no answer)
+     * numero_invalido (invalid number)
+     * ya_en_app (already in app)
+     * llamar_despues (call later)
+     * sin_info (no info)
+     * pendiente (pending)
+
+2.3 SUPERVISOR FEATURES (Management & admin)
+   - Global dashboard with aggregated metrics:
+     * Total clients in system
+     * Total calls made
+     * Unique clients called
+     * Calls made today
+     * Performance metrics by operator
+     * Call status distribution
+   - Manage clients:
+     * View all clients
+     * Search clients
+     * Select and bulk assign to operators
+   - Operator management:
+     * Create new operators
+     * View operator list
+     * Edit operator (name, username, password)
+     * Deactivate/activate operators
+     * Cannot deactivate self
+   - Import functionality:
+     * CSV import (Google Contacts format)
+     * VCF import (vCard format)
+     * Bulk client assignment to operators
+     * Duplicate detection by normalized phone
+   - Reports:
+     * Export data (all clients with last status, attempts, assignment)
+     * Operator progress tracking (clients, statuses, attempts)
+     * Dashboard with operator performance metrics
+
+2.4 DATA IMPORT FEATURES
+   - CSV upload (Google Contacts compatible)
+   - VCF/vCard upload
+   - Phone normalization (duplicate prevention)
+   - Field mapping:
+     * Name, organization, email, phone, city, region, country
+   - Duplicate detection by normalized phone number
+   - Batch import with success/skip counters
+   - File cleanup after import
+
+2.5 CALL TRACKING & HISTORY
+   - Call status tracking for each client-operator interaction
+   - Call notes storage
+   - Scheduled call dates (scheduled_at field)
+   - Call duration tracking
+   - Call history per client (newest first)
+   - Operator call history view
+   - Status-based filtering and reporting
+
+
+3. CURRENT USER ROLE SYSTEM
+================================================================================
+
+3.1 TWO-TIER ROLE STRUCTURE
+   
+   SUPERVISOR (Admin role)
+   - Can view all users, operators, clients, calls, assignments
+   - Full access to all endpoints
+   - Can create/edit/deactivate operators
+   - Can import clients in bulk
+   - Can assign clients to operators
+   - Can view global dashboard and reports
+   - Cannot be deactivated by themselves
+   - Access to: /supervisor/* routes
+   
+   OPERATOR (Teleworker/Agent role)
+   - Can only view clients assigned to them
+   - Can record calls and outcomes
+   - Can view personal statistics
+   - Can search within assigned clients only
+   - Limited to: /operator/* routes
+   - Cannot access supervisor functions
+
+3.2 ROLE-BASED ACCESS CONTROL (RBAC) IMPLEMENTATION
+   - Middleware check: supervisorOnly() for protected endpoints
+   - Frontend route protection: <ProtectedRoute role="operator|supervisor">
+   - Query-level filtering: Operators can only see their own data
+   - Row-level security: Calls filtered by operator_id for operators
+   
+   Examples of filtering:
+   - listCalls: If operator role, add condition: operator_id = req.user.id
+   - listClients with 'mine': Inner join with assignments filtered by operator_id
+   - myStats: Queries only calls where operator_id = req.user.id
+
+3.3 ENDPOINTS PROTECTED BY ROLE
+   
+   Supervisor-only:
+   - POST /import/csv (import clients)
+   - POST /import/vcf (import vCard)
+   - POST /import/assign (assign clients to operators)
+   - POST /import/operator (create operator)
+   - PUT /import/operator/:id (edit operator)
+   - DELETE /import/operator/:id (deactivate operator)
+   - GET /import/operators (list operators)
+   
+   Available to both (with row filtering):
+   - GET /clients (filtered by role)
+   - GET /clients/:id (no filtering at API, but operator sees only assigned)
+   - GET /calls (filtered by role)
+   - POST /calls (operator auto-assigned to their own call)
+   - GET /calls/stats/mine (operator statistics)
+   - GET /reports/dashboard (all data for supervisors)
+   - GET /reports/operator/:id (supervisor sees any operator)
+   - GET /reports/export (full export, usually supervisor)
+
+
+4. CURRENT DATA ISOLATION
+================================================================================
+
+4.1 DATA ISOLATION BETWEEN OPERATORS
+   
+   STRONG ISOLATION - Operators are effectively isolated from each other:
+   
+   For Operators:
+   - Clients: Only see assigned clients via assignments table
+     Query: SELECT c.* FROM clients c INNER JOIN assignments a 
+            WHERE a.operator_id = current_user_id
+   
+   - Calls: Only see their own calls (implicit in query)
+     Query: SELECT * FROM calls WHERE operator_id = current_user_id
+   
+   - Stats: Only their own statistics are calculated
+   
+   - Cannot see other operators' calls or assignments
+   - Cannot assign clients to other operators
+   - Cannot view other operators' performance
+   
+   Data isolation mechanism:
+   - No shared resources between operators
+   - No direct access to other operators' data at API level
+   - Frontend does not display other operators' information
+
+4.2 DATA ISOLATION BETWEEN SUPERVISORS AND OPERATORS
+   
+   ASYMMETRIC ISOLATION:
+   
+   Supervisors can see:
+   - All clients
+   - All calls (by all operators)
+   - All assignments
+   - All operators
+   - Full system dashboard
+   
+   Operators cannot see:
+   - System-wide data
+   - Other operators
+   - Global dashboard
+   - Other operators' calls or clients
+
+4.3 CURRENT ISOLATION LIMITATIONS
+   
+   NO TENANT ISOLATION:
+   - No company_id or tenant_id field in tables
+   - All data in single database is accessible to supervisors
+   - No multi-company separation
+   - If another company's supervisor could log in, they'd see all data
+   - Operators from different companies could theoretically be mixed
+
+
+5. CURRENT AUTHENTICATION/AUTHORIZATION MODEL
+================================================================================
+
+5.1 AUTHENTICATION FLOW
+   
+   1. User submits credentials (username/password) to POST /auth/login
+   2. Backend queries users table by username
+   3. Password compared with bcrypt hash using bcrypt.compareSync()
+   4. If valid:
+      - JWT token generated with payload: {id, username, role, name}
+      - Token signed with JWT_SECRET (24h expiration)
+      - Token returned with user object
+   5. Frontend stores token in localStorage
+   6. All subsequent requests include: Authorization: Bearer <token>
+   7. Backend middleware verifies token using jwt.verify()
+   8. req.user object populated for route handlers
+   9. On 401 response, frontend clears token and redirects to /login
+
+5.2 AUTHORIZATION FLOW
+   
+   Role-based (RBAC):
+   1. auth middleware verifies JWT token exists and is valid
+   2. supervisorOnly middleware checks req.user.role === 'supervisor'
+   3. Frontend ProtectedRoute component checks user.role matches required role
+   4. Database queries add WHERE clauses based on user role
+   
+   Example authorization stack for listing operators:
+   - Frontend: ProtectedRoute role="supervisor"
+   - Backend: auth middleware (JWT check)
+   - Backend: supervisorOnly middleware (role check)
+   - Backend: Query executed
+
+5.3 SECURITY IMPLEMENTATION DETAILS
+   
+   Password Security:
+   - Passwords hashed with bcryptjs (10 salt rounds)
+   - Hash comparison done with bcrypt.compareSync()
+   - Passwords never stored in plain text
+   - Passwords never returned in API responses
+   
+   Token Security:
+   - JWT uses HS256 algorithm (symmetric)
+   - Secret: environment variable JWT_SECRET
+   - 24-hour expiration (short-lived)
+   - Token stored in localStorage (vulnerable to XSS but simplistic)
+   - No refresh token mechanism
+   
+   Session Security:
+   - Stateless JWT authentication (no server sessions)
+   - Token automatically expires after 24 hours
+   - Manual logout removes token from client
+   - Auto-logout on 401 (server-side token invalidation not checked)
+
+5.4 POTENTIAL SECURITY ISSUES
+   
+   - Token stored in localStorage (XSS vulnerability)
+   - No refresh token mechanism (requires re-login after 24h)
+   - JWT secret shared between frontend (hardcoded) and backend
+   - No CSRF protection visible
+   - No rate limiting on login endpoint
+   - No audit logging of authentication events
+   - No password complexity requirements
+   - No password reset functionality
+   - No two-factor authentication
+
+
+6. WHAT WOULD NEED TO CHANGE FOR MULTITENANT ARCHITECTURE
+================================================================================
+
+6.1 DATABASE SCHEMA CHANGES REQUIRED
+   
+   NEW TABLE: companies (or tenants)
+   - id (SERIAL PRIMARY KEY)
+   - name (TEXT NOT NULL)
+   - slug (TEXT UNIQUE) - for subdomain/URL routing
+   - domain (TEXT) - custom domain support
+   - billing_plan (TEXT)
+   - subscription_status (TEXT - 'active', 'trial', 'suspended')
+   - max_operators (INTEGER)
+   - max_clients (INTEGER)
+   - created_at (TIMESTAMPTZ)
+   - updated_at (TIMESTAMPTZ)
+   
+   MODIFIED TABLE: users
+   - Add column: company_id (INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE)
+   - IMPORTANT: Change UNIQUE constraint on username to (username, company_id)
+     Current: UNIQUE (username)
+     New: UNIQUE (username, company_id) - allows same username in different companies
+   - Add column: tenant_id (alias for company_id, for consistency)
+   
+   MODIFIED TABLE: clients
+   - Add column: company_id (INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE)
+   - Add index: (company_id, normalized_phone) - for deduplication within tenant
+   
+   MODIFIED TABLE: calls
+   - Add column: company_id (INTEGER NOT NULL REFERENCES companies(id))
+   - Can be derived from client.company_id via join, but add for query efficiency
+   
+   MODIFIED TABLE: assignments
+   - Add column: company_id (INTEGER NOT NULL REFERENCES companies(id))
+   - Same reasoning as calls
+   
+   NEW TABLE: company_subscriptions (optional but recommended)
+   - id (SERIAL PRIMARY KEY)
+   - company_id (INTEGER NOT NULL REFERENCES companies(id))
+   - plan_type (TEXT - 'free', 'pro', 'enterprise')
+   - monthly_cost (NUMERIC)
+   - operator_limit (INTEGER)
+   - client_limit (INTEGER)
+   - features (JSONB - feature flags)
+   - active_from (TIMESTAMPTZ)
+   - active_until (TIMESTAMPTZ)
+   
+   AUDIT TABLE (recommended)
+   - id (SERIAL PRIMARY KEY)
+   - company_id (INTEGER NOT NULL)
+   - user_id (INTEGER)
+   - action (TEXT)
+   - resource_type (TEXT - 'client', 'call', 'user', etc.)
+   - resource_id (INTEGER)
+   - changes (JSONB)
+   - created_at (TIMESTAMPTZ)
+
+6.2 BACKEND ROUTE CHANGES REQUIRED
+   
+   NEW ENDPOINTS:
+   - POST /api/companies (create new company - admin only)
+   - GET /api/companies/:id (get company details - owner only)
+   - PUT /api/companies/:id (update company - owner only)
+   - GET /api/companies/:id/usage (subscription usage stats)
+   - POST /api/companies/:id/invite (invite user to company)
+   - DELETE /api/companies/:id (delete company - owner only)
+   
+   MODIFIED ENDPOINTS:
+   All existing endpoints need company_id filtering:
+   
+   GET /api/clients
+   - Before: return all clients OR clients where operator_id = current_user
+   - After: return clients WHERE company_id = current_user.company_id AND (all|mine)
+   
+   POST /api/calls
+   - Before: Insert call with operator_id = current_user.id
+   - After: Insert call with operator_id = current_user.id AND company_id = current_user.company_id
+   - Add validation: client.company_id must match user.company_id
+   
+   GET /api/calls
+   - Before: return all calls OR operator's calls
+   - After: return calls WHERE company_id = current_user.company_id
+   
+   GET /api/reports/dashboard
+   - Before: aggregate all data in system
+   - After: aggregate only current_user.company_id data
+   
+   POST /import/assign
+   - Before: assign any client to any operator
+   - After: validate all client_ids and operator_id belong to same company
+   
+   POST /import/operator (create operator)
+   - Before: create operator with no company
+   - After: create operator with company_id = current_user.company_id
+   
+   Authentication endpoints:
+   
+   POST /api/auth/login
+   - Current: query users where username = $1
+   - After: query users where username = $1 AND company_id = ? 
+     Problem: Need to know company_id before login!
+     Solution 1: Pass company slug/domain in login request
+     Solution 2: Look up username globally, check permissions per company
+     Solution 3: Company selection screen after login
+     Recommended: Solution 1 + domain routing
+
+6.3 AUTHENTICATION/AUTHORIZATION CHANGES
+   
+   LOGIN FLOW CHANGES:
+   
+   Before:
+   - POST /auth/login {username, password}
+   - Find user where username = $1
+   - Return token with user.company_id (would be null/undefined)
+   
+   After (Option 1: Company in subdomain):
+   - Domain routing determines company_id
+   - Request to api.company1.localhost/auth/login
+   - Extract company_id from domain
+   - POST /auth/login {username, password}
+   - Find user where username = $1 AND company_id = extracted_company_id
+   - Return token with user.company_id included
+   
+   After (Option 2: Company slug in request):
+   - POST /auth/login {username, password, company_slug}
+   - Look up company by slug
+   - Find user where username = $1 AND company_id = company.id
+   - Return token with user.company_id
+   
+   MIDDLEWARE CHANGES:
+   
+   Current auth middleware:
+   ```
+   function auth(req, res, next) {
+     const token = req.headers.authorization;
+     const decoded = jwt.verify(token, SECRET);
+     req.user = decoded; // Has: id, username, role, name
+     next();
+   }
+   ```
+   
+   New auth middleware:
+   ```
+   function auth(req, res, next) {
+     const token = req.headers.authorization;
+     const decoded = jwt.verify(token, SECRET);
+     req.user = decoded; // Has: id, username, role, name, company_id
+     req.company_id = decoded.company_id;
+     next();
+   }
+   ```
+   
+   New middleware: tenantCheck
+   ```
+   function tenantCheck(req, res, next) {
+     const urlCompanyId = req.params.company_id;
+     if (parseInt(urlCompanyId) !== req.user.company_id) {
+       return res.status(403).json({ error: 'Unauthorized' });
+     }
+     next();
+   }
+   ```
+   
+   All routes need tenant validation:
+   ```
+   router.get('/companies/:company_id/clients', auth, tenantCheck, listClients);
+   ```
+
+6.4 QUERY CHANGES (Every endpoint needs WHERE company_id)
+   
+   Current query pattern:
+   ```sql
+   SELECT * FROM clients WHERE id = $1
+   ```
+   
+   Multitenant pattern:
+   ```sql
+   SELECT * FROM clients 
+   WHERE id = $1 AND company_id = $2
+   ```
+   
+   Every query must include company_id filter:
+   - clients table: WHERE company_id = $x
+   - calls table: WHERE company_id = $x
+   - assignments table: WHERE company_id = $x
+   - users table: WHERE company_id = $x (if querying users)
+   
+   This affects 40+ query locations across all route files.
+
+6.5 FRONTEND CHANGES REQUIRED
+   
+   ROUTING CHANGES:
+   - Current: /operator, /supervisor, /login
+   - After: /companies/:company_id/operator, /companies/:company_id/supervisor
+   - Or: Subdomain routing (api.company1.com vs api.company2.com)
+   
+   CONTEXT CHANGES:
+   - AuthContext needs to store company_id
+   - Add CompanyContext or tenant context
+   - Store company_id in token payload and localStorage
+   
+   COMPONENT CHANGES:
+   - ProtectedRoute needs to check both role AND company_id
+   - Layout needs to display current company name
+   - Add company switcher (if user belongs to multiple companies)
+   
+   API CLIENT CHANGES:
+   - Current: baseURL: '/api'
+   - After: baseURL: '/api/companies/{company_id}'
+   - Dynamic baseURL based on current company_id from context
+
+6.6 DATA ISOLATION IMPLEMENTATION
+   
+   Row-Level Security (RLS) in PostgreSQL (Recommended):
+   ```sql
+   ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+   
+   CREATE POLICY company_clients_policy ON clients
+   USING (company_id = current_setting('app.company_id')::int);
+   
+   CREATE POLICY company_clients_policy_insert ON clients
+   WITH CHECK (company_id = current_setting('app.company_id')::int);
+   ```
+   
+   Then in backend:
+   ```javascript
+   await pool.query("SET app.company_id = $1", [req.user.company_id]);
+   ```
+   
+   Benefit: Automatic isolation, no manual WHERE clauses needed
+   Trade-off: Performance overhead, more complex testing
+
+6.7 SHARED RESOURCES vs TENANT-SPECIFIC
+   
+   Current model - Everything is single-tenant global:
+   - Users: Global across system
+   - Clients: Global pool
+   - Calls: Global tracking
+   
+   Multitenant model - Everything scoped:
+   - Users: Per-company (username unique per company)
+   - Clients: Per-company (cannot share between tenants)
+   - Calls: Per-company (tied to tenant's clients and operators)
+   - Reports: Per-company (aggregates only tenant's data)
+   
+   What might be shared (design decision):
+   - Phone number normalization rules (system-wide)
+   - Call status enums (system-wide)
+   - UI themes/branding (could be tenant-specific)
+
+6.8 DEPLOYMENT & INFRASTRUCTURE CHANGES
+   
+   Current:
+   - Single database: highfil_crm
+   - Single backend instance
+   - Single frontend instance
+   - Single Docker network
+   
+   Multitenant options:
+   
+   Option 1: Shared schema (current approach extended)
+   - Single database with company_id in all tables
+   - Pros: Simple, lower costs, easy to implement
+   - Cons: No hard isolation, harder to scale, data leaks if bug
+   
+   Option 2: Separate schemas per tenant
+   - One PostgreSQL database with multiple schemas
+   - Each schema has identical table structure
+   - Pros: Better isolation, easier backups per tenant
+   - Cons: More complex, operational overhead
+   
+   Option 3: Separate databases per tenant
+   - Each tenant gets own PostgreSQL database
+   - Maximum isolation and scalability
+   - Cons: Much more operational complexity, higher costs
+   
+   Recommended: Option 1 initially, migrate to Option 2 if scaling
+
+6.9 OPERATIONAL CONCERNS
+   
+   Backup & Recovery:
+   - Current: Single backup of entire database
+   - After: Need per-tenant backup capability
+   - Or: Full backup with restore filtering by company_id
+   
+   Data Export:
+   - Ensure exports respect tenant boundaries
+   - User cannot export another company's data
+   
+   User Management:
+   - Users cannot be shared between companies
+   - Some users might eventually need multi-company access (admin panel)
+   - Need separate "system admin" role separate from company supervisor
+   
+   Rate Limiting:
+   - Current: No rate limiting
+   - Should add per-company rate limits (to prevent abuse)
+   - Or per-user rate limits
+   
+   Billing & Metering:
+   - Track usage per company (operators, clients, calls)
+   - Enforce limits based on subscription plan
+   - Need usage tracking endpoint
+   
+   Audit & Compliance:
+   - Log who accesses what data (for compliance)
+   - Track data exports
+   - Log admin actions per company
+
+6.10 FEATURE FLAG ARCHITECTURE
+   
+   Some features might be subscription-dependent:
+   ```javascript
+   async function checkFeatureAccess(req, res, next) {
+     const company = await getCompany(req.user.company_id);
+     req.features = {
+       csv_import: company.plan !== 'free',
+       advanced_reports: company.plan === 'enterprise',
+       api_access: company.plan !== 'free',
+       custom_domain: company.plan === 'enterprise'
+     };
+     next();
+   }
+   ```
+   
+   Then in routes:
+   ```javascript
+   router.post('/import/csv', auth, (req, res, next) => {
+     if (!req.features.csv_import) {
+       return res.status(403).json({ error: 'Feature not available in your plan' });
+     }
+     next();
+   });
+   ```
+
+6.11 MIGRATION STRATEGY
+   
+   Phase 1: Infrastructure setup
+   - Add companies table
+   - Add company_id to users, clients, calls, assignments tables
+   - Create initial company record for existing data
+   - Assign all existing users/clients/calls to initial company
+   
+   Phase 2: Backend isolation
+   - Add req.company_id to all requests
+   - Update all queries to filter by company_id
+   - Update authentication to support company context
+   - Add tenantCheck middleware
+   - Implement RLS if using PostgreSQL
+   
+   Phase 3: Frontend updates
+   - Update routing for company context
+   - Update API client to use company-scoped URLs
+   - Update components to handle multiple companies
+   - Add company switcher
+   
+   Phase 4: Testing & deployment
+   - Comprehensive testing of isolation
+   - Load testing with multiple tenants
+   - Gradual rollout
+   
+   Phase 5: New tenant onboarding
+   - UI/API for creating new companies
+   - Admin dashboard for company management
+   - Invitation system for users
+
+
+7. IMPLEMENTATION CHECKLIST FOR MULTITENANT
+================================================================================
+
+DATABASE LAYER:
+  [ ] Create companies table
+  [ ] Add company_id to users, clients, calls, assignments
+  [ ] Update unique constraints on users table
+  [ ] Add indexes on company_id for performance
+  [ ] Create foreign key constraints
+  [ ] Create indexes on (company_id, other_column)
+  [ ] Consider RLS implementation
+
+BACKEND - AUTHENTICATION:
+  [ ] Update JWT token to include company_id
+  [ ] Modify login endpoint for company context
+  [ ] Add tenantCheck middleware
+  [ ] Add companyContext middleware to extract company_id from request
+
+BACKEND - ALL ROUTES:
+  [ ] Add company_id to all SELECT queries
+  [ ] Add company_id to all INSERT queries
+  [ ] Add company_id to all UPDATE queries
+  [ ] Add company_id to all DELETE queries
+  [ ] Validate company_id matches user's company
+  [ ] Create helper function: ensureUserInCompany(userId, companyId)
+  [ ] Audit all 40+ database queries
+
+BACKEND - NEW ENDPOINTS:
+  [ ] Company creation endpoint
+  [ ] Company update endpoint
+  [ ] User invitation to company
+  [ ] Company usage/billing endpoint
+
+FRONTEND:
+  [ ] Update AuthContext to store company_id
+  [ ] Create CompanyContext
+  [ ] Update API client baseURL
+  [ ] Update routing with company_id parameter
+  [ ] Update ProtectedRoute to check company
+  [ ] Update all pages to use company context
+  [ ] Add company switcher component
+  [ ] Update navigation with company name
+
+TESTING:
+  [ ] Test that operator A cannot see operator B's data from different company
+  [ ] Test that supervisor of company A cannot see company B data
+  [ ] Test isolation of calls, clients, assignments per company
+  [ ] Test that admin panel doesn't exist yet (plan for Phase 2)
+  [ ] Load testing with multiple tenants
+
+DEPLOYMENT:
+  [ ] Database migration strategy
+  [ ] Zero-downtime deployment plan
+  [ ] Backup and restore procedures per tenant
+  [ ] Monitoring and alerting for tenant data access
+  [ ] Rate limiting per tenant
+
+
+8. RISK ANALYSIS
+================================================================================
+
+SECURITY RISKS:
+
+High Priority:
+  - SQL Injection: Queries don't use parameterized correctly in all places
+    Risk: Could expose/modify data across tenants
+    Mitigation: Audit all queries, use ORM or query builder
+  
+  - Missing company_id filter: Forgetting WHERE company_id filter in one query
+    Risk: Data leakage between tenants
+    Mitigation: Centralized query helper functions
+  
+  - JWT secret in code: Same secret for all tenants
+    Risk: Tenant could forge other tenant's tokens
+    Mitigation: Move to environment variable (already done)
+
+Medium Priority:
+  - Token stored in localStorage: XSS vulnerability
+    Risk: Attacker could steal token
+    Mitigation: Use httpOnly cookies instead
+  
+  - No rate limiting: Brute force attacks
+    Risk: Operator could brute force supervisor password
+    Mitigation: Implement rate limiting
+
+OPERATIONAL RISKS:
+
+  - Data migration: Assigning existing data to company
+    Risk: Data corruption
+    Mitigation: Test migration in staging, have rollback plan
+  
+  - Query performance: company_id filters on large tables
+    Risk: Slow queries if indexes not correct
+    Mitigation: Proper index strategy, monitoring
+
+  - Accidental data deletion: DELETE without company_id filter
+    Risk: Delete all data from all tenants
+    Mitigation: Soft deletes, audit logging, careful code review
+
+
+9. CURRENT STATE SUMMARY
+================================================================================
+
+Single-Tenant Application: YES
+- Designed for single company/organization
+- All users share all data (filtered by role only)
+- Global client pool accessed by all operators
+- No tenant context or isolation
+
+Operator Isolation: Strong
+- Operators only see assigned clients
+- Operators only see their own calls
+- Cannot access other operators' data
+
+Supervisor Isolation: None
+- Supervisors see all data in system
+- Can access all clients, calls, assignments
+- Can manage all operators
+
+Multi-company Support: NO
+- No company/tenant table
+- No company_id in any data tables
+- Username must be unique globally (would conflict between companies)
+- All authentication/authorization assumes single tenant
+
+Complexity Level: Low to Medium
+- Clean separation between roles
+- Clear query patterns (easy to migrate)
+- No complex multi-company logic
+- Straightforward data relationships
+
+Scalability: Moderate
+- Single database handles all data
+- No tenant-specific scaling
+- Performance limited by database and single backend instance
+
+READINESS FOR MULTITENANT: 70%
+Pros:
+- Clean role-based architecture
+- Simple data model
+- No complex business logic for sharing
+- Good code organization
+
+Cons:
+- No infrastructure for multitenancy
+- Need significant schema changes
+- Query patterns need systematic update
+- Need authentication redesign
+- Frontend needs company routing logic
+
+ESTIMATED EFFORT: 80-120 hours
+- Database changes: 10 hours
+- Backend migration: 40-60 hours
+- Frontend migration: 20-30 hours
+- Testing & QA: 20 hours
+- Deployment & documentation: 10 hours
+
+================================================================================
+END OF ANALYSIS
+================================================================================

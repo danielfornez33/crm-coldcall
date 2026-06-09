@@ -1,9 +1,11 @@
 import { useAuth } from '../context/AuthContext';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
+  const params = useParams();
+  const companyId = params.companyId;
   const isSupervisor = user?.role === 'supervisor';
 
   return (
@@ -13,16 +15,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="nav-links">
           {isSupervisor && (
             <>
-              <Link to="/supervisor" className={loc.pathname === '/supervisor' ? 'active' : ''}>Dashboard</Link>
-              <Link to="/supervisor/clientes" className={loc.pathname.includes('clientes') ? 'active' : ''}>Clientes</Link>
-              <Link to="/supervisor/importar" className={loc.pathname === '/supervisor/importar' ? 'active' : ''}>Importar</Link>
-              <Link to="/supervisor/operadores" className={loc.pathname === '/supervisor/operadores' ? 'active' : ''}>Operadores</Link>
+              <Link to={`/companies/${companyId}/supervisor`} className={loc.pathname === `/companies/${companyId}/supervisor` ? 'active' : ''}>Dashboard</Link>
+              <Link to={`/companies/${companyId}/supervisor/clientes`} className={loc.pathname.includes('clientes') ? 'active' : ''}>Clientes</Link>
+              <Link to={`/companies/${companyId}/supervisor/importar`} className={loc.pathname === `/companies/${companyId}/supervisor/importar` ? 'active' : ''}>Importar</Link>
+              <Link to={`/companies/${companyId}/supervisor/operadores`} className={loc.pathname === `/companies/${companyId}/supervisor/operadores` ? 'active' : ''}>Operadores</Link>
             </>
           )}
           {!isSupervisor && (
             <>
-              <Link to="/operator" className={loc.pathname === '/operator' ? 'active' : ''}>Mis llamadas</Link>
-              <Link to="/operator/historial" className={loc.pathname.includes('historial') ? 'active' : ''}>Historial</Link>
+              <Link to={`/companies/${companyId}/operator`} className={loc.pathname === `/companies/${companyId}/operator` ? 'active' : ''}>Mis llamadas</Link>
+              <Link to={`/companies/${companyId}/operator/historial`} className={loc.pathname.includes('historial') ? 'active' : ''}>Historial</Link>
             </>
           )}
         </div>

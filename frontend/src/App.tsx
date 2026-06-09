@@ -11,9 +11,14 @@ import ImportPage from './pages/ImportPage';
 import OperatorsPage from './pages/OperatorsPage';
 
 function Home() {
-  const { user } = useAuth();
+  const { user, companies, loading } = useAuth();
+  
+  if (loading) return <div className="loading">Cargando...</div>;
   if (!user) return <Navigate to="/login" />;
-  return <Navigate to={user.role === 'supervisor' ? '/supervisor' : '/operator'} />;
+  if (companies.length === 0) return <div className="loading">Cargando empresas...</div>;
+
+  const companyId = companies[0].id;
+  return <Navigate to={`/companies/${companyId}/${user.role === 'supervisor' ? 'supervisor' : 'operator'}`} />;
 }
 
 function App() {
@@ -23,12 +28,12 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<Home />} />
-          <Route path="/operator" element={<ProtectedRoute role="operator"><Layout><OperatorDashboard /></Layout></ProtectedRoute>} />
-          <Route path="/operator/historial" element={<ProtectedRoute role="operator"><Layout><OperatorHistory /></Layout></ProtectedRoute>} />
-          <Route path="/supervisor" element={<ProtectedRoute role="supervisor"><Layout><SupervisorDashboard /></Layout></ProtectedRoute>} />
-          <Route path="/supervisor/clientes" element={<ProtectedRoute role="supervisor"><Layout><SupervisorClients /></Layout></ProtectedRoute>} />
-          <Route path="/supervisor/importar" element={<ProtectedRoute role="supervisor"><Layout><ImportPage /></Layout></ProtectedRoute>} />
-          <Route path="/supervisor/operadores" element={<ProtectedRoute role="supervisor"><Layout><OperatorsPage /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/operator" element={<ProtectedRoute role="operator"><Layout><OperatorDashboard /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/operator/historial" element={<ProtectedRoute role="operator"><Layout><OperatorHistory /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/supervisor" element={<ProtectedRoute role="supervisor"><Layout><SupervisorDashboard /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/supervisor/clientes" element={<ProtectedRoute role="supervisor"><Layout><SupervisorClients /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/supervisor/importar" element={<ProtectedRoute role="supervisor"><Layout><ImportPage /></Layout></ProtectedRoute>} />
+          <Route path="/companies/:companyId/supervisor/operadores" element={<ProtectedRoute role="supervisor"><Layout><OperatorsPage /></Layout></ProtectedRoute>} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

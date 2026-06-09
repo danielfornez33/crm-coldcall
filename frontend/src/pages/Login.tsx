@@ -14,8 +14,7 @@ export default function Login() {
     setErr('');
     try {
       await login(username, password);
-      const role = JSON.parse(localStorage.getItem('user') || '{}').role;
-      navigate(role === 'supervisor' ? '/supervisor' : '/operator');
+      navigate('/');
     } catch {
       setErr('Usuario o contraseña incorrectos');
     }
