@@ -20,7 +20,6 @@ async function listClients(req, res) {
         INNER JOIN assignments a ON a.client_id = c.id
         WHERE a.operator_id = $${i++} AND c.company_id = $${i++}
         ORDER BY c.last_name ASC NULLS LAST
-        LIMIT 200
       `;
       params = [req.user.id, companyId];
     } else if (search) {
@@ -31,11 +30,10 @@ async function listClients(req, res) {
           AND (first_name ILIKE $${i++} OR last_name ILIKE $${i++} OR nickname ILIKE $${i++}
                OR organization ILIKE $${i++} OR phone ILIKE $${i++} OR normalized_phone ILIKE $${i++})
         ORDER BY last_name ASC NULLS LAST
-        LIMIT 200
       `;
       params = [companyId, s, s, s, s, s, s];
     } else {
-      query = 'SELECT * FROM clients WHERE company_id = $1 ORDER BY last_name ASC NULLS LAST LIMIT 200';
+      query = 'SELECT * FROM clients WHERE company_id = $1 ORDER BY last_name ASC NULLS LAST';
       params = [companyId];
     }
 
@@ -395,7 +393,6 @@ async function getUnassigned(req, res) {
       LEFT JOIN assignments a ON a.client_id = c.id
       WHERE c.company_id = $1 AND a.id IS NULL
       ORDER BY c.last_name ASC NULLS LAST
-      LIMIT 200
     `, [companyId]);
     res.json(rows);
   } catch (err) {
